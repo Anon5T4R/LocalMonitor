@@ -3,12 +3,16 @@
 //! sob demanda (comando). Encerrar processo é pedido explícito da UI (com
 //! confirmação lá — não é destrutivo de dados, mas derruba o app alvo).
 
+mod startup;
+
 use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::Serialize;
 use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
 use tauri::{AppHandle, Emitter, Manager};
+
+use startup::StartupEntry;
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -99,6 +103,12 @@ fn list_processes(state: tauri::State<'_, Sys>) -> Vec<ProcRow> {
     rows
 }
 
+/// Programas na inicialização do sistema (aba "Inicialização").
+#[tauri::command(async)]
+fn list_startup() -> Vec<StartupEntry> {
+    startup::list_startup()
+}
+
 /// Encerra um processo (a UI confirma antes).
 #[tauri::command(async)]
 fn kill_process(state: tauri::State<'_, Sys>, pid: u32) -> Result<(), String> {
@@ -146,7 +156,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![list_processes, kill_process])
+        .invoke_handler(tauri::generate_handler![list_processes, kill_process, list_startup])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

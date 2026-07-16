@@ -272,6 +272,54 @@ input {
   visibility: visible;
 }
 
+/* ---------- inicialização ---------- */
+.startup {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+}
+.startup-note {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.startup-head,
+.startup-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 90px minmax(200px, 2fr);
+  gap: 10px;
+  padding: 4px 14px;
+  align-items: center;
+}
+.startup-head {
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.startup-body {
+  flex: 1;
+  overflow-y: auto;
+}
+.startup-row {
+  height: 30px;
+}
+.startup-row:hover {
+  background: var(--panel-2);
+}
+.startup-row .col {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.list-msg {
+  padding: 24px;
+  text-align: center;
+}
+
 /* ---------- modal / toasts / util ---------- */
 .muted {
   color: var(--muted);

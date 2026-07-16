@@ -1,6 +1,6 @@
 [package]
 name = "localmonitor"
-version = "0.1.0"
+version = "0.2.0"
 description = "LocalMonitor — monitor de sistema 100% offline da suíte Local"
 authors = ["Taylor"]
 edition = "2021"
@@ -25,3 +25,7 @@ sysinfo = "0.33"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
+
+[target.'cfg(windows)'.dependencies]
+# Aba "Inicialização": lê as chaves Run (HKCU/HKLM) — mesmo crate do LocalImage.
+winreg = "0.55"

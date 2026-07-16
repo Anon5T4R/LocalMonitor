@@ -45,9 +45,16 @@ function Spark({ samples, max }: { samples: number[]; max: number }) {
   );
 }
 
+interface StartupEntry {
+  name: string;
+  command: string;
+  source: string;
+}
+
 export default function App() {
-  const [tab, setTab] = useState<"overview" | "processes">("overview");
+  const [tab, setTab] = useState<"overview" | "processes" | "startup">("overview");
   const [stats, setStats] = useState<Stats | null>(null);
+  const [startup, setStartup] = useState<StartupEntry[]>([]);
   const cpuHist = useRef<number[]>([]);
   const rxHist = useRef<number[]>([]);
   const txHist = useRef<number[]>([]);
@@ -88,6 +95,12 @@ export default function App() {
     return () => clearInterval(id);
   }, [tab]);
 
+  // Aba de inicialização: carrega uma vez ao abrir.
+  useEffect(() => {
+    if (tab !== "startup" || !isTauri) return;
+    void invoke<StartupEntry[]>("list_startup").then(setStartup).catch(() => setStartup([]));
+  }, [tab]);
+
   const shown = useMemo(() => {
     const f = filter.trim().toLowerCase();
     const list = f ? procs.filter((p) => p.name.toLowerCase().includes(f)) : [...procs];
@@ -122,6 +135,9 @@ export default function App() {
             onClick={() => setTab("processes")}
           >
             {t("tab.processes")}
+          </button>
+          <button className={tab === "startup" ? "active" : ""} onClick={() => setTab("startup")}>
+            {t("tab.startup")}
           </button>
         </div>
         <span className="toolbar-fill" />
@@ -244,6 +260,33 @@ export default function App() {
                   <button className="kill-btn" onClick={() => setConfirmKill(p)}>
                     {t("proc.kill")}
                   </button>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === "startup" && (
+        <div className="startup">
+          <div className="startup-note muted small">{t("startup.note")}</div>
+          <div className="startup-head">
+            <span className="col name">{t("startup.name")}</span>
+            <span className="col src">{t("startup.source")}</span>
+            <span className="col cmd">{t("startup.command")}</span>
+          </div>
+          <div className="startup-body">
+            {startup.length === 0 && <div className="muted list-msg">{t("startup.empty")}</div>}
+            {startup.map((s, i) => (
+              <div key={i} className="startup-row">
+                <span className="col name" title={s.name}>
+                  {s.name}
+                </span>
+                <span className="col src muted" title={s.source}>
+                  {s.source}
+                </span>
+                <span className="col cmd muted" title={s.command}>
+                  {s.command}
                 </span>
               </div>
             ))}

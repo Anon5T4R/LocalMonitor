@@ -16,6 +16,13 @@ const pt = {
   "top.settingsTitle": "Configurações",
   "tab.overview": "Visão geral",
   "tab.processes": "Processos",
+  "tab.startup": "Inicialização",
+
+  "startup.empty": "Nada inicia com o sistema (ou sem permissão pra ler).",
+  "startup.name": "Programa",
+  "startup.source": "Origem",
+  "startup.command": "Comando",
+  "startup.note": "Só leitura — para desativar, use o Gerenciador de Tarefas (Windows) ou as Aplicações de arranque (Linux).",
 
   "card.cpu": "CPU",
   "card.mem": "Memória",
@@ -58,6 +65,13 @@ const en: Record<MessageKey, string> = {
   "top.settingsTitle": "Settings",
   "tab.overview": "Overview",
   "tab.processes": "Processes",
+  "tab.startup": "Startup",
+
+  "startup.empty": "Nothing starts with the system (or no permission to read).",
+  "startup.name": "Program",
+  "startup.source": "Source",
+  "startup.command": "Command",
+  "startup.note": "Read-only — to disable, use Task Manager (Windows) or Startup Applications (Linux).",
 
   "card.cpu": "CPU",
   "card.mem": "Memory",
@@ -98,6 +112,13 @@ const es: Record<MessageKey, string> = {
   "top.settingsTitle": "Configuración",
   "tab.overview": "Visión general",
   "tab.processes": "Procesos",
+  "tab.startup": "Inicio",
+
+  "startup.empty": "Nada se inicia con el sistema (o sin permiso para leer).",
+  "startup.name": "Programa",
+  "startup.source": "Origen",
+  "startup.command": "Comando",
+  "startup.note": "Solo lectura — para desactivar, usa el Administrador de tareas (Windows) o Aplicaciones al inicio (Linux).",
 
   "card.cpu": "CPU",
   "card.mem": "Memoria",

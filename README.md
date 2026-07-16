@@ -3,8 +3,13 @@
 Monitor de sistema **100% offline** da suíte Local — o Gerenciador de Tarefas
 local: veja o que a máquina está fazendo e encerre o que travou.
 
-## Recursos (v0.1)
+## Recursos
 
+**v0.2**
+- **Aba Inicialização**: programas que iniciam com o sistema (chaves Run
+  HKCU/HKLM no Windows; `.desktop` de autostart no Linux) — só leitura
+
+**v0.1**
 - **Visão geral ao vivo** (1,5 s): CPU total com sparkline + **barras por
   núcleo**, memória/swap, **rede** (↓/↑ por segundo, com histórico) e
   **discos** (uso por volume)
@@ -12,8 +17,8 @@ local: veja o que a máquina está fazendo e encerre o que travou.
   (com confirmação — trabalho não salvo no app alvo se perde)
 - Uptime no topo · Tema claro/escuro/sistema · UI em **PT/EN/ES**
 
-**Roadmap:** v0.2 = analisador de uso de disco (treemap navegável),
-programas na inicialização · v0.3 = temperatura/GPU, alertas, histórico.
+**Roadmap:** v0.3 = analisador de uso de disco (treemap navegável),
+temperatura/GPU, alertas, histórico.
 
 ## Stack
 
