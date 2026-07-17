@@ -5,11 +5,12 @@
 
 mod startup;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use sysinfo::{Disks, Networks, ProcessesToUpdate, System};
+use sysinfo::{Disks, Networks, Pid, ProcessesToUpdate, System, Users};
 use tauri::{AppHandle, Emitter, Manager};
 
 use startup::StartupEntry;
@@ -24,6 +25,14 @@ struct DiskInfo {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+struct NetIface {
+    name: String,
+    rx: u64,
+    tx: u64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct Stats {
     cpu_total: f32,
     per_core: Vec<f32>,
@@ -34,6 +43,8 @@ struct Stats {
     /// Bytes/s desde a última amostra (somados em todas as interfaces).
     net_rx: u64,
     net_tx: u64,
+    /// Mesmas taxas, por interface (só as com tráfego, ordenadas por volume).
+    net_ifaces: Vec<NetIface>,
     disks: Vec<DiskInfo>,
     uptime_s: u64,
 }
@@ -47,8 +58,32 @@ struct ProcRow {
     mem: u64,
 }
 
+/// Detalhe de um processo (aberto ao clicar numa linha).
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ProcDetail {
+    pid: u32,
+    name: String,
+    exe: Option<String>,
+    cmd: String,
+    cwd: Option<String>,
+    user: Option<String>,
+    parent: Option<u32>,
+    status: String,
+    cpu: f32,
+    mem: u64,
+    virtual_mem: u64,
+    run_time_s: u64,
+    /// Bytes lidos/escritos em disco desde a última amostra do sysinfo.
+    disk_read: u64,
+    disk_written: u64,
+}
+
 /// System compartilhado entre a thread de stats e o comando de processos.
 pub struct Sys(Mutex<System>);
+
+/// Intervalo (ms) do loop de stats — ajustável pela UI.
+pub struct StatsInterval(AtomicU64);
 
 fn collect_stats(sys: &mut System, networks: &mut Networks, disks: &mut Disks, interval_s: f64) -> Stats {
     sys.refresh_cpu_usage();
@@ -57,10 +92,17 @@ fn collect_stats(sys: &mut System, networks: &mut Networks, disks: &mut Disks, i
     disks.refresh(true);
 
     let (mut rx, mut tx) = (0u64, 0u64);
-    for (_name, data) in networks.iter() {
-        rx += data.received();
-        tx += data.transmitted();
+    let rate = |b: u64| (b as f64 / interval_s) as u64;
+    let mut ifaces: Vec<NetIface> = Vec::new();
+    for (name, data) in networks.iter() {
+        let (r, t) = (data.received(), data.transmitted());
+        rx += r;
+        tx += t;
+        if r > 0 || t > 0 {
+            ifaces.push(NetIface { name: name.clone(), rx: rate(r), tx: rate(t) });
+        }
     }
+    ifaces.sort_by_key(|i| std::cmp::Reverse(i.rx + i.tx));
 
     Stats {
         cpu_total: sys.global_cpu_usage(),
@@ -69,8 +111,9 @@ fn collect_stats(sys: &mut System, networks: &mut Networks, disks: &mut Disks, i
         mem_total: sys.total_memory(),
         swap_used: sys.used_swap(),
         swap_total: sys.total_swap(),
-        net_rx: (rx as f64 / interval_s) as u64,
-        net_tx: (tx as f64 / interval_s) as u64,
+        net_rx: rate(rx),
+        net_tx: rate(tx),
+        net_ifaces: ifaces,
         disks: disks
             .iter()
             .map(|d| DiskInfo {
@@ -103,10 +146,51 @@ fn list_processes(state: tauri::State<'_, Sys>) -> Vec<ProcRow> {
     rows
 }
 
+/// Detalhe completo de um processo (exe, linha de comando, usuário, IO…).
+#[tauri::command(async)]
+fn process_detail(state: tauri::State<'_, Sys>, pid: u32) -> Result<ProcDetail, String> {
+    let mut sys = state.0.lock().unwrap();
+    let target = Pid::from_u32(pid);
+    sys.refresh_processes(ProcessesToUpdate::Some(&[target]), true);
+    let users = Users::new_with_refreshed_list();
+    let p = sys.process(target).ok_or("processo não encontrado (já saiu?)")?;
+    let du = p.disk_usage();
+    Ok(ProcDetail {
+        pid,
+        name: p.name().to_string_lossy().into_owned(),
+        exe: p.exe().map(|e| e.to_string_lossy().into_owned()),
+        cmd: p
+            .cmd()
+            .iter()
+            .map(|s| s.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" "),
+        cwd: p.cwd().map(|c| c.to_string_lossy().into_owned()),
+        user: p
+            .user_id()
+            .and_then(|uid| users.get_user_by_id(uid))
+            .map(|u| u.name().to_string()),
+        parent: p.parent().map(|pp| pp.as_u32()),
+        status: p.status().to_string(),
+        cpu: p.cpu_usage(),
+        mem: p.memory(),
+        virtual_mem: p.virtual_memory(),
+        run_time_s: p.run_time(),
+        disk_read: du.read_bytes,
+        disk_written: du.written_bytes,
+    })
+}
+
 /// Programas na inicialização do sistema (aba "Inicialização").
 #[tauri::command(async)]
 fn list_startup() -> Vec<StartupEntry> {
     startup::list_startup()
+}
+
+/// Ajusta o intervalo (ms) do loop de stats (clamp 500–10000).
+#[tauri::command(async)]
+fn set_stats_interval(state: tauri::State<'_, StatsInterval>, ms: u64) {
+    state.0.store(ms.clamp(500, 10000), Ordering::Relaxed);
 }
 
 /// Encerra um processo (a UI confirma antes).
@@ -138,25 +222,37 @@ pub fn run() {
 
     builder
         .manage(Sys(Mutex::new(System::new_all())))
+        .manage(StatsInterval(AtomicU64::new(1500)))
         .setup(|app| {
             let handle: AppHandle = app.handle().clone();
             std::thread::spawn(move || {
                 let mut networks = Networks::new_with_refreshed_list();
                 let mut disks = Disks::new_with_refreshed_list();
-                const INTERVAL: f64 = 1.5;
+                let mut last = Instant::now();
                 loop {
-                    {
-                        let state = handle.state::<Sys>();
-                        let mut sys = state.0.lock().unwrap();
-                        let stats = collect_stats(&mut sys, &mut networks, &mut disks, INTERVAL);
-                        let _ = handle.emit("sys-stats", stats);
-                    }
-                    std::thread::sleep(Duration::from_secs_f64(INTERVAL));
+                    let ms = handle.state::<StatsInterval>().0.load(Ordering::Relaxed);
+                    std::thread::sleep(Duration::from_millis(ms));
+                    // Divide o tráfego pela janela REAL medida (o intervalo pode
+                    // ter mudado no meio) pra a taxa em bytes/s ficar correta.
+                    let now = Instant::now();
+                    let elapsed = now.duration_since(last).as_secs_f64().max(0.001);
+                    last = now;
+                    let state = handle.state::<Sys>();
+                    let mut sys = state.0.lock().unwrap();
+                    let stats = collect_stats(&mut sys, &mut networks, &mut disks, elapsed);
+                    drop(sys);
+                    let _ = handle.emit("sys-stats", stats);
                 }
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![list_processes, kill_process, list_startup])
+        .invoke_handler(tauri::generate_handler![
+            list_processes,
+            kill_process,
+            process_detail,
+            list_startup,
+            set_stats_interval
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

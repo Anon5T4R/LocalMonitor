@@ -16,6 +16,12 @@ interface DiskInfo {
   available: number;
 }
 
+interface NetIface {
+  name: string;
+  rx: number;
+  tx: number;
+}
+
 interface Stats {
   cpuTotal: number;
   perCore: number[];
@@ -25,6 +31,7 @@ interface Stats {
   swapTotal: number;
   netRx: number;
   netTx: number;
+  netIfaces: NetIface[];
   disks: DiskInfo[];
   uptimeS: number;
 }
@@ -35,6 +42,26 @@ interface ProcRow {
   cpu: number;
   mem: number;
 }
+
+interface ProcDetail {
+  pid: number;
+  name: string;
+  exe: string | null;
+  cmd: string;
+  cwd: string | null;
+  user: string | null;
+  parent: number | null;
+  status: string;
+  cpu: number;
+  mem: number;
+  virtualMem: number;
+  runTimeS: number;
+  diskRead: number;
+  diskWritten: number;
+}
+
+const INTERVAL_KEY = "localmonitor.interval";
+const INTERVAL_OPTIONS = [1000, 1500, 2000, 3000, 5000];
 
 function Spark({ samples, max }: { samples: number[]; max: number }) {
   const points = sparkPoints(samples, 260, 56, max);
@@ -62,8 +89,28 @@ export default function App() {
   const [filter, setFilter] = useState("");
   const [sortBy, setSortBy] = useState<"cpu" | "mem" | "name">("cpu");
   const [confirmKill, setConfirmKill] = useState<ProcRow | null>(null);
+  const [detail, setDetail] = useState<ProcDetail | null>(null);
+  const [intervalMs, setIntervalMs] = useState(
+    () => Number(localStorage.getItem(INTERVAL_KEY)) || 1500,
+  );
   const setSettingsOpen = useUi((s) => s.setSettingsOpen);
   const pushToast = useUi((s) => s.pushToast);
+
+  // Aplica o intervalo do loop de stats no backend (e persiste).
+  useEffect(() => {
+    if (!isTauri) return;
+    localStorage.setItem(INTERVAL_KEY, String(intervalMs));
+    void invoke("set_stats_interval", { ms: intervalMs }).catch(() => {});
+  }, [intervalMs]);
+
+  const openDetail = async (pid: number) => {
+    if (!isTauri) return;
+    try {
+      setDetail(await invoke<ProcDetail>("process_detail", { pid }));
+    } catch (e) {
+      pushToast("error", String(e));
+    }
+  };
 
   useEffect(() => {
     if (!isTauri) return;
@@ -146,6 +193,18 @@ export default function App() {
             {t("card.uptime")}: {formatUptime(stats.uptimeS)}
           </span>
         )}
+        <select
+          className="interval-select"
+          title={t("top.interval")}
+          value={intervalMs}
+          onChange={(e) => setIntervalMs(Number(e.target.value))}
+        >
+          {INTERVAL_OPTIONS.map((ms) => (
+            <option key={ms} value={ms}>
+              {ms % 1000 === 0 ? `${ms / 1000}s` : `${(ms / 1000).toFixed(1)}s`}
+            </option>
+          ))}
+        </select>
         <button title={t("top.settingsTitle")} onClick={() => setSettingsOpen(true)}>
           ⚙
         </button>
@@ -199,6 +258,18 @@ export default function App() {
             </div>
             <Spark samples={rxHist.current} max={netMax} />
             <Spark samples={txHist.current} max={netMax} />
+            {stats && stats.netIfaces.length > 0 && (
+              <div className="iface-list">
+                {stats.netIfaces.slice(0, 4).map((n) => (
+                  <div key={n.name} className="iface-row muted small" title={n.name}>
+                    <span className="iface-name">{n.name}</span>
+                    <span>
+                      {t("net.down", { v: formatBytes(n.rx) })} {t("net.up", { v: formatBytes(n.tx) })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="card">
@@ -250,9 +321,13 @@ export default function App() {
           <div className="procs-body">
             {shown.map((p) => (
               <div key={p.pid} className="proc-row">
-                <span className="col name" title={p.name}>
+                <button
+                  className="col name proc-name-btn"
+                  title={t("proc.detailHint", { name: p.name })}
+                  onClick={() => void openDetail(p.pid)}
+                >
                   {p.name}
-                </span>
+                </button>
                 <span className="col pid muted">{p.pid}</span>
                 <span className="col num">{p.cpu.toFixed(1)}</span>
                 <span className="col num">{formatBytes(p.mem)}</span>
@@ -302,6 +377,56 @@ export default function App() {
               <button onClick={() => setConfirmKill(null)}>{t("dlg.cancel")}</button>
               <button className="danger" onClick={() => void kill(confirmKill)}>
                 {t("dlg.kill")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {detail && (
+        <div className="modal-backdrop" onClick={() => setDetail(null)}>
+          <div className="modal detail-modal" onClick={(e) => e.stopPropagation()}>
+            <h2 title={detail.name}>
+              {detail.name} <span className="muted">· {detail.pid}</span>
+            </h2>
+            <dl className="detail-grid">
+              <dt>{t("detail.status")}</dt>
+              <dd>{detail.status}</dd>
+              <dt>{t("detail.user")}</dt>
+              <dd>{detail.user ?? "—"}</dd>
+              <dt>{t("detail.parent")}</dt>
+              <dd>{detail.parent ?? "—"}</dd>
+              <dt>{t("detail.cpu")}</dt>
+              <dd>{detail.cpu.toFixed(1)}%</dd>
+              <dt>{t("detail.mem")}</dt>
+              <dd>
+                {formatBytes(detail.mem)} <span className="muted">({formatBytes(detail.virtualMem)} virt.)</span>
+              </dd>
+              <dt>{t("detail.runTime")}</dt>
+              <dd>{formatUptime(detail.runTimeS)}</dd>
+              <dt>{t("detail.diskIo")}</dt>
+              <dd>
+                ↓ {formatBytes(detail.diskRead)} · ↑ {formatBytes(detail.diskWritten)}
+              </dd>
+              <dt>{t("detail.exe")}</dt>
+              <dd className="mono wrap">{detail.exe ?? "—"}</dd>
+              <dt>{t("detail.cwd")}</dt>
+              <dd className="mono wrap">{detail.cwd ?? "—"}</dd>
+              <dt>{t("detail.cmd")}</dt>
+              <dd className="mono wrap">{detail.cmd || "—"}</dd>
+            </dl>
+            <div className="modal-actions">
+              <button
+                className="danger"
+                onClick={() => {
+                  setConfirmKill({ pid: detail.pid, name: detail.name, cpu: detail.cpu, mem: detail.mem });
+                  setDetail(null);
+                }}
+              >
+                {t("proc.kill")}
+              </button>
+              <button className="primary" onClick={() => setDetail(null)}>
+                {t("dlg.ok")}
               </button>
             </div>
           </div>

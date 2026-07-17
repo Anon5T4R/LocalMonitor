@@ -1,6 +1,6 @@
 [package]
 name = "localmonitor"
-version = "0.2.0"
+version = "0.3.0"
 description = "LocalMonitor — monitor de sistema 100% offline da suíte Local"
 authors = ["Taylor"]
 edition = "2021"

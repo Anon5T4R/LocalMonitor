@@ -394,3 +394,17 @@ input {
   background: var(--err-bg);
   border-color: var(--err-border);
 }
+
+/* ---------- v0.3: intervalo, interfaces de rede, detalhe de processo ---------- */
+.interval-select { padding: 4px 6px; }
+.iface-list { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+.iface-row { display: flex; justify-content: space-between; gap: 10px; }
+.iface-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
+.proc-name-btn { background: transparent; border: none; padding: 0; text-align: left; color: var(--accent); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proc-name-btn:hover { text-decoration: underline; }
+.detail-modal { width: min(560px, 94vw); }
+.detail-grid { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 12px 0; }
+.detail-grid dt { color: var(--muted); white-space: nowrap; }
+.detail-grid dd { margin: 0; min-width: 0; }
+.detail-grid dd.mono { font-family: ui-monospace, Consolas, monospace; font-size: 0.86em; }
+.detail-grid dd.wrap { word-break: break-all; }
