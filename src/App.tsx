@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import DiskTreemap from "./components/DiskTreemap";
 import SettingsModal from "./components/SettingsModal";
 import Toasts from "./components/Toasts";
 import { t } from "./lib/i18n";
@@ -79,7 +80,7 @@ interface StartupEntry {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<"overview" | "processes" | "startup">("overview");
+  const [tab, setTab] = useState<"overview" | "processes" | "startup" | "disk">("overview");
   const [stats, setStats] = useState<Stats | null>(null);
   const [startup, setStartup] = useState<StartupEntry[]>([]);
   const cpuHist = useRef<number[]>([]);
@@ -185,6 +186,9 @@ export default function App() {
           </button>
           <button className={tab === "startup" ? "active" : ""} onClick={() => setTab("startup")}>
             {t("tab.startup")}
+          </button>
+          <button className={tab === "disk" ? "active" : ""} onClick={() => setTab("disk")}>
+            {t("tab.disk")}
           </button>
         </div>
         <span className="toolbar-fill" />
@@ -368,6 +372,16 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* A aba de disco fica SEMPRE montada, só escondida — não é `tab === "disk"
+          && <DiskTreemap/>`. A varredura roda no Rust e leva minutos; se o
+          componente desmontasse ao trocar de aba, os listeners de progresso e
+          de fim morriam junto e o usuário voltaria pra uma tela vazia com a
+          thread ainda varrendo. `display: contents` preserva o layout flex do
+          .app quando visível. */}
+      <div style={{ display: tab === "disk" ? "contents" : "none" }}>
+        <DiskTreemap />
+      </div>
 
       {confirmKill && (
         <div className="modal-backdrop" onClick={() => setConfirmKill(null)}>

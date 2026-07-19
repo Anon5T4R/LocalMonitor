@@ -3,9 +3,11 @@
 //! sob demanda (comando). Encerrar processo é pedido explícito da UI (com
 //! confirmação lá — não é destrutivo de dados, mas derruba o app alvo).
 
+mod diskscan;
 mod startup;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -13,6 +15,7 @@ use serde::Serialize;
 use sysinfo::{Disks, Networks, Pid, ProcessesToUpdate, System, Users};
 use tauri::{AppHandle, Emitter, Manager};
 
+use diskscan::{DirView, ScanDone, ScanState};
 use startup::StartupEntry;
 
 #[derive(Serialize, Clone)]
@@ -193,6 +196,88 @@ fn set_stats_interval(state: tauri::State<'_, StatsInterval>, ms: u64) {
     state.0.store(ms.clamp(500, 10000), Ordering::Relaxed);
 }
 
+/// Dispara a varredura de disco numa thread própria.
+///
+/// Retorna IMEDIATAMENTE — varrer `C:\` leva minutos e segurar o comando
+/// deixaria a janela sem resposta. O progresso vai por `disk-scan-progress`
+/// e o fim por `disk-scan-done` (com `canceled` dizendo como terminou).
+/// Uma varredura por vez: a segunda chamada é recusada com erro em vez de
+/// competir pelo mesmo state.
+#[tauri::command(async)]
+fn disk_scan_start(app: AppHandle, path: String) -> Result<(), String> {
+    let root = PathBuf::from(&path);
+    if !root.is_dir() {
+        return Err(format!("não é uma pasta acessível: {path}"));
+    }
+    let state = app.state::<ScanState>();
+    // compare_exchange: dois cliques rápidos no botão não podem virar duas
+    // threads varrendo e escrevendo no mesmo mapa.
+    if state
+        .running
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("já existe uma varredura em andamento".into());
+    }
+    state.cancel.store(false, Ordering::SeqCst);
+    // Limpa o resultado anterior já: se a nova varredura for cancelada no
+    // meio, é melhor a UI ver o parcial novo do que o completo antigo.
+    state.map.lock().unwrap().clear();
+    state.sizes.lock().unwrap().clear();
+
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let inicio = Instant::now();
+        let st = handle.state::<ScanState>();
+        let mut emitir = |p: &diskscan::ScanProgress| {
+            let _ = handle.emit("disk-scan-progress", p);
+        };
+        let (map, sizes, totals) = diskscan::scan(&root, &st.cancel, &mut emitir);
+        let canceled = st.cancel.load(Ordering::SeqCst);
+        *st.map.lock().unwrap() = map;
+        *st.sizes.lock().unwrap() = sizes;
+        *st.totals.lock().unwrap() = totals.clone();
+        // running só cai DEPOIS do resultado publicado: assim quem receber o
+        // evento de fim já encontra o mapa pronto pra consultar.
+        st.running.store(false, Ordering::SeqCst);
+        let _ = handle.emit(
+            "disk-scan-done",
+            ScanDone {
+                root: root.to_string_lossy().into_owned(),
+                canceled,
+                elapsed_ms: inicio.elapsed().as_millis() as u64,
+                totals,
+            },
+        );
+    });
+    Ok(())
+}
+
+/// Pede o cancelamento (a thread checa a flag a cada entrada de diretório,
+/// então para em milissegundos). O parcial varrido até ali é preservado.
+#[tauri::command(async)]
+fn disk_scan_cancel(state: tauri::State<'_, ScanState>) {
+    state.cancel.store(true, Ordering::SeqCst);
+}
+
+/// Filhos de UMA pasta da última varredura (é o que o treemap desenha).
+#[tauri::command(async)]
+fn disk_entries(state: tauri::State<'_, ScanState>, path: String) -> Result<DirView, String> {
+    let map = state.map.lock().unwrap();
+    let sizes = state.sizes.lock().unwrap();
+    diskscan::dir_view(&map, &sizes, &path).ok_or_else(|| format!("pasta fora da varredura: {path}"))
+}
+
+/// Raízes sugeridas pra varrer (pontos de montagem reais da máquina) — evita
+/// obrigar o usuário a digitar `C:\` na mão.
+#[tauri::command(async)]
+fn disk_roots() -> Vec<String> {
+    Disks::new_with_refreshed_list()
+        .iter()
+        .map(|d| d.mount_point().to_string_lossy().into_owned())
+        .collect()
+}
+
 /// Encerra um processo (a UI confirma antes).
 #[tauri::command(async)]
 fn kill_process(state: tauri::State<'_, Sys>, pid: u32) -> Result<(), String> {
@@ -223,6 +308,11 @@ pub fn run() {
     builder
         .manage(Sys(Mutex::new(System::new_all())))
         .manage(StatsInterval(AtomicU64::new(1500)))
+        .manage(ScanState {
+            cancel: AtomicBool::new(false),
+            running: AtomicBool::new(false),
+            ..Default::default()
+        })
         .setup(|app| {
             let handle: AppHandle = app.handle().clone();
             std::thread::spawn(move || {
@@ -251,7 +341,11 @@ pub fn run() {
             kill_process,
             process_detail,
             list_startup,
-            set_stats_interval
+            set_stats_interval,
+            disk_scan_start,
+            disk_scan_cancel,
+            disk_entries,
+            disk_roots
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
